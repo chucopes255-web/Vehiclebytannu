@@ -1,7 +1,6 @@
 package com.sysupd;
 
 import android.app.AlertDialog;
-import android.app.ProgressDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -28,7 +27,9 @@ public class MainActivity extends AppCompatActivity {
     TextView vehicleValue, mobileValue, chassisValue, statusText;
     LinearLayout resultCard;
     ProgressBar loading;
+    Button searchBtn;
     String lastV = "", lastM = "", lastC = "";
+    boolean isFetching = false;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -36,7 +37,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         final EditText input = findViewById(R.id.vehicleInput);
-        Button search = findViewById(R.id.searchBtn);
+        searchBtn = findViewById(R.id.searchBtn);
         TextView settingsIcon = findViewById(R.id.settingsIcon);
         resultCard = findViewById(R.id.resultCard);
         loading = findViewById(R.id.loading);
@@ -45,16 +46,15 @@ public class MainActivity extends AppCompatActivity {
         chassisValue = findViewById(R.id.chassisValue);
         statusText = findViewById(R.id.statusText);
 
-        // Telegram join popup on first open
         showTelegramDialog();
 
-        // Settings icon — password protected
         settingsIcon.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { askPassword(); }
         });
 
-        search.setOnClickListener(new View.OnClickListener() {
+        searchBtn.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
+                if (isFetching) return;
                 String vnum = input.getText().toString().trim().toUpperCase();
                 if (vnum.length() < 6) {
                     Toast.makeText(MainActivity.this,
@@ -120,14 +120,7 @@ public class MainActivity extends AppCompatActivity {
     private void showOwnerPanel() {
         new AlertDialog.Builder(this)
             .setTitle("👑 Owner Panel")
-            .setMessage(
-                "Welcome, Tanvir\n\n" +
-                "Application: Vehicle Info\n" +
-                "Version: 1.0\n" +
-                "Developer: Tanvir\n" +
-                "Channel: @fbxshop\n\n" +
-                "This app is for authorized vehicle info lookup only."
-            )
+            .setMessage("Welcome, Tanvir\n\nApplication: Vehicle Info\nVersion: 1.0\nChannel: @fbxshop")
             .setPositiveButton("OK", null)
             .show();
     }
@@ -140,52 +133,83 @@ public class MainActivity extends AppCompatActivity {
     }
 
     class FetchTask extends AsyncTask<String, Void, String> {
-        ProgressDialog pd;
+        @Override
         protected void onPreExecute() {
-            pd = new ProgressDialog(MainActivity.this);
-            pd.setMessage("Searching...");
-            pd.setCancelable(false);
-            pd.show();
+            isFetching = true;
+            searchBtn.setEnabled(false);
+            searchBtn.setText("Searching...");
+            loading.setVisibility(View.VISIBLE);
             resultCard.setVisibility(View.GONE);
             statusText.setText("");
         }
+
+        @Override
         protected String doInBackground(String... p) {
             try {
                 URL url = new URL("https://masking-pannel.vercel.app/api?veh=" + p[0]);
                 HttpURLConnection c = (HttpURLConnection) url.openConnection();
                 c.setRequestMethod("GET");
-                c.setConnectTimeout(15000);
+                c.setConnectTimeout(20000);
+                c.setReadTimeout(20000);
+                c.setRequestProperty("Accept", "application/json");
                 BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream()));
                 StringBuilder sb = new StringBuilder();
                 String line;
                 while ((line = r.readLine()) != null) sb.append(line);
                 r.close();
                 return sb.toString();
-            } catch (Exception e) { return null; }
+            } catch (Exception e) {
+                return "ERROR:" + e.getMessage();
+            }
         }
+
+        @Override
         protected void onPostExecute(String resp) {
-            if (pd != null) pd.dismiss();
+            isFetching = false;
+            searchBtn.setEnabled(true);
+            searchBtn.setText("🔍 Search Owner Details");
+            loading.setVisibility(View.GONE);
+
             if (resp == null) {
-                statusText.setText("⚠️ Network error");
+                statusText.setText("⚠️ Network error. Try again.");
                 return;
             }
+
+            if (resp.startsWith("ERROR:")) {
+                statusText.setText("⚠️ Connection failed. Check internet.");
+                return;
+            }
+
             try {
                 JSONObject o = new JSONObject(resp);
+
                 if (!o.optBoolean("success", false)) {
-                    statusText.setText("❌ Vehicle not found");
+                    statusText.setText("❌ Vehicle not found in database");
                     return;
                 }
-                lastV = o.optString("reg_no", "");
-                lastM = o.optString("mobile", "");
-                lastC = o.optString("chassis_last5", "");
+
+                String regNo = o.optString("reg_no", "").trim();
+                String mobile = o.optString("mobile", "").trim();
+                String chassis = o.optString("chassis_last5", "").trim();
+
+                // Agar mobile ya chassis empty hai
+                if (mobile.isEmpty() && chassis.isEmpty()) {
+                    statusText.setText("⚠️ Owner details not available for this vehicle");
+                    return;
+                }
+
+                lastV = regNo.isEmpty() ? "—" : regNo;
+                lastM = mobile.isEmpty() ? "Not available" : mobile;
+                lastC = chassis.isEmpty() ? "Not available" : chassis;
 
                 vehicleValue.setText(lastV);
                 mobileValue.setText(lastM);
                 chassisValue.setText(lastC);
                 resultCard.setVisibility(View.VISIBLE);
                 statusText.setText("👆 Tap any field to copy");
+
             } catch (Exception e) {
-                statusText.setText("⚠️ Error parsing data");
+                statusText.setText("⚠️ Invalid response from server");
             }
         }
     }
