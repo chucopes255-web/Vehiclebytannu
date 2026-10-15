@@ -5,9 +5,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
     <application
-        android:allowBackup="true"
-        android:label="Vehicle Info"
-        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+    android:allowBackup="true"
+    android:label="Vehicle Info"
+    android:icon="@mipmap/ic_launcher"
+    android:theme="@style/Theme.AppCompat.Light.NoActionBar">
 
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
